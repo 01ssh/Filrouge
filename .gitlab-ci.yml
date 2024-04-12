@@ -1,0 +1,139 @@
+image: hashicorp/terraform:1.7.4
+variables:
+  CI_DEBUG_TRACE: "false"
+  FR_REPO_NAME: toolset
+  FR_DOCKER_COMMIT_TAG: latest
+  FR_ORGANISATION: solcomputing
+  FR_REGION: "eu-west-3"
+
+stages:
+  - build-and-image
+  - build-access
+  - build-cluster
+  - push-images
+  - update-dns
+
+build-toolset-images:
+  stage: build-and-image
+  image:
+    name: gcr.io/kaniko-project/executor:v1.14.0-debug
+    entrypoint: [""]
+  script:
+    - |
+      /kaniko/executor \
+      --context "${CI_PROJECT_DIR}/tools" \
+      --dockerfile "${CI_PROJECT_DIR}/tools/Dockerfile" \
+      --destination "${CI_REGISTRY_IMAGE}:${FR_DOCKER_COMMIT_TAG}"
+  rules:
+    - if: $CI_COMMIT_REF_NAME
+
+
+build-iam-access-from-terraform:
+  environment:
+    name: "${CI_COMMIT_REF_NAME}"
+  stage: build-access
+  image:
+    name: "${CI_REGISTRY_IMAGE}:${FR_DOCKER_COMMIT_TAG}"
+    entrypoint: [""]
+  script:
+    - |
+      echo "ACCOUNT:${ACCOUNT}:${CI_COMMIT_REF_NAME}"
+      [[ ! -p "$HOME/.terraform.d/" ]] && mkdir -p $HOME/.terraform.d/
+      echo "{\"credentials\": {\"app.terraform.io\": {\"token\": \"%TERRAFORM_LOGIN_TOKEN%\"}}}" > $HOME/.terraform.d/credentials.tfrc.json &&\
+      sed -i s/%TERRAFORM_LOGIN_TOKEN%/$CI_TERRAFORM_CICD/g $HOME/.terraform.d/credentials.tfrc.json
+      export TF_VAR_CICD_VAULT_TOKEN=$CICD_VAULT_TOKEN
+      export TF_VAR_ACCOUNT=${ACCOUNT}
+      [[ ! -z "$TF_VAR_CICD_VAULT_TOKEN" ]]  && chmod 755 ./build.sh && ./build.sh -u ${ACCOUNT} -p tf/access -w IAM_${ACCOUNT} -s
+
+  rules:
+    - if: $JOB != "certs"
+    - if: $CICD_VAULT_TOKEN
+    - if: $CI_COMMIT_REF_NAME
+    - if: $CI_TERRAFORM_CICD_TOKEN
+    - if: $CI_COMMIT_BRANCH =~ /development|preprod|production/
+      when: manual
+
+01-build-cluster-from-terraform:
+  environment:
+    name: ${CI_COMMIT_REF_NAME}
+  stage: build-cluster
+  image:
+    name: "${CI_REGISTRY_IMAGE}:${FR_DOCKER_COMMIT_TAG}"
+    entrypoint: [""]
+  script:
+    - |
+      [[ ! -p "$HOME/.terraform.d/" ]] && mkdir -p $HOME/.terraform.d/
+      echo "{\"credentials\": {\"app.terraform.io\": {\"token\": \"%TERRAFORM_LOGIN_TOKEN%\"}}}" > $HOME/.terraform.d/credentials.tfrc.json &&\
+      sed -i s/%TERRAFORM_LOGIN_TOKEN%/$CI_TERRAFORM_CICD/g $HOME/.terraform.d/credentials.tfrc.json
+      export TF_VAR_CICD_VAULT_TOKEN=$CICD_VAULT_TOKEN
+      chmod 755 ./build.sh && chmod 755 ./build.sh && ./build.sh -u ${ACCOUNT} -p tf/cluster -w ${ACCOUNT}_${CI_COMMIT_REF_NAME} -s
+  needs: ["build-iam-access-from-terraform"]
+  rules:
+    - if: $CICD_VAULT_TOKEN
+    - if: $CI_COMMIT_REF_NAME
+    - if: $CI_TERRAFORM_CICD_TOKEN
+    - if: $CI_COMMIT_BRANCH =~ /development|preprod|production/
+      when: manual
+
+
+02-build-rds-aurora-from-terraform:
+  environment:
+    name: ${CI_COMMIT_REF_NAME}
+  stage: build-cluster
+  image:
+    name: "${CI_REGISTRY_IMAGE}:${FR_DOCKER_COMMIT_TAG}"
+    entrypoint: [""]
+  script:
+    - |
+      python ./tools/aws-configure.py -a ${CICD_VAULT_TOKEN_ADDR} -v ${CICD_VAULT_TOKEN} -e ${CI_COMMIT_REF_NAME} -p aws/${ACCOUNT}_administrators -r ${FR_REGION} -u ${ACCOUNT} && cat ~/.bashrc && source ~/.bashrc
+      [[ ! -p "$HOME/.terraform.d/" ]] && mkdir -p $HOME/.terraform.d/
+      echo "{\"credentials\": {\"app.terraform.io\": {\"token\": \"%TERRAFORM_LOGIN_TOKEN%\"}}}" > $HOME/.terraform.d/credentials.tfrc.json &&\
+      sed -i s/%TERRAFORM_LOGIN_TOKEN%/$CI_TERRAFORM_CICD/g $HOME/.terraform.d/credentials.tfrc.json
+      export TF_VAR_CICD_VAULT_TOKEN=$CICD_VAULT_TOKEN
+      export DB_CLUSTER_LIST=$(aws rds describe-db-clusters --db-cluster-identifier aurora-cluster-wordpress-${CI_COMMIT_REF_NAME} 2>&1 | grep DBClusterNotFoundFault)
+      [[ "$DB_CLUSTER_LIST" != "" ]] && chmod 755 ./build.sh && chmod 755 ./build.sh && ./build.sh -u ${ACCOUNT} -p tf/database -w aurora_${CI_COMMIT_REF_NAME} -s
+      exit 0
+  needs: ["01-build-cluster-from-terraform"]
+
+03-04-cicd-first-shot:
+  stage: build-cluster
+  trigger:
+    project: aws-solcomputing/filrouge-app
+    branch: ${CI_COMMIT_BRANCH}
+  needs: ["01-build-cluster-from-terraform", 
+          "02-build-rds-aurora-from-terraform"]
+
+05-push-to-registry-toolset-to-ecr:
+  stage: build-cluster
+  environment:
+    name: "${CI_COMMIT_REF_NAME}"
+  image:
+    name: "${CI_REGISTRY_IMAGE}:${FR_DOCKER_COMMIT_TAG}"
+    entrypoint: [""]
+  script:
+    - |
+      python ./tools/aws-configure.py -a ${CICD_VAULT_TOKEN_ADDR} -v ${CICD_VAULT_TOKEN} -e ${CI_COMMIT_REF_NAME} -p aws/${ACCOUNT}_administrators -r ${FR_REGION} -u ${ACCOUNT} && cat ~/.bashrc && source ~/.bashrc
+      export CI_REGISTRY="$(aws sts get-caller-identity | jq -r .Account | tr -d '\n').dkr.ecr.${FR_REGION}.amazonaws.com/${FR_REPO_NAME}"
+      /kaniko/executor --context  "${CI_PROJECT_DIR}/tools"\
+                       --dockerfile "${CI_PROJECT_DIR}/tools/Dockerfile"\
+                       --build-arg  AWS_DEFAULT_REGION=$FR_REGION \
+                       --build-arg  AWS_REGION=$FR_REGION \
+                       --build-arg  AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID \
+                       --build-arg  AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY \
+                       --destination  "${CI_REGISTRY}:${FR_DOCKER_COMMIT_TAG}" \
+                       --skip-tls-verify
+
+  needs: ["01-build-cluster-from-terraform"]
+  when: on_success
+  rules:
+    - if: $CI_COMMIT_REF_NAME =~ /development|preprod|production/
+
+06-route53:
+  stage: update-dns
+  trigger:
+    project: aws-solcomputing/filrouge-route53
+    branch: ${CI_COMMIT_BRANCH}
+  needs: ["01-build-cluster-from-terraform", 
+          "02-build-rds-aurora-from-terraform",
+          "03-04-cicd-first-shot"]
+  when: on_success
