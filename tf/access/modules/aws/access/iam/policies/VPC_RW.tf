@@ -1,7 +1,8 @@
 data "aws_iam_policy_document" "vpcPolicy_RW" {
   statement {
     actions = [
-                "ec2:CreateVpc",
+                "ec2:CreateVolume",
+				"ec2:CreateVpc",
 				"ec2:CreateTags",
 				"ec2:DescribeVpcs",
 				"ec2:DescribeVpcAttribute",
@@ -42,7 +43,7 @@ data "aws_iam_policy_document" "vpcPolicy_RW" {
 				"autoscaling:DescribeAutoScalingGroups",
 				"ec2:DeleteTags",
 				"route53:*",
-				"route53domains:*"
+				"route53domains:*",
 
     ]
     effect    = "Allow"

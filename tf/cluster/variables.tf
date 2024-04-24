@@ -12,7 +12,7 @@ type = string
 
 #token
 variable "CICD_VAULT_TOKEN" {
-default     = "hvs.CAESIBfnDOIOxeuJ0Jzkrhv6eFlwX0V0OISdBMzuO09xcz4ZGigKImh2cy40SEpOTm1XUUpKeVpBcVJHYkhyQ0NTWWQuYkhudmsQqvYR"
+default     = "hvs.CAESIA9oJJw7HQVtzq3HWBgQyIRaymSZZ6dZTmZMIzXoLJCVGigKImh2cy5kTEFoY25XM01VRVBXWGsyWnB0OWFhT2EuYkhudmsQluMW"
 description = "Hashicorp Vault Token"
 type = string
 }

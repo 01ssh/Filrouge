@@ -9,15 +9,27 @@ data "aws_iam_role" "eks-iam-role" {
 data "aws_caller_identity" "current" {}
 
 resource "aws_eks_cluster" "cluster" {
- name        = "${var.cluster_name}"
+ name        = "${var.clustername}"
  role_arn    = data.aws_iam_role.eks-iam-role.arn
  vpc_config {
   subnet_ids = concat(var.subnet_private_ids, var.subnet_public_ids)
  }
+ 
  tags = {
     environment = var.environment
   }
 }
+
+resource "aws_eks_addon" "addons" {
+  for_each          = { for addon in var.addons : addon.name => addon }
+  cluster_name      = aws_eks_cluster.cluster.id
+  addon_name        = each.value.name
+  addon_version     = each.value.version
+  depends_on = [
+     aws_eks_cluster.cluster
+  ]
+}
+
 
 data "aws_eks_cluster_auth" "cluster" {
   name = aws_eks_cluster.cluster.name
@@ -28,8 +40,8 @@ data "aws_iam_role" "workernodes" {
 }
 
  resource "aws_eks_node_group" "worker-node-group-private" {
-  cluster_name    = "${var.cluster_name}"
-  node_group_name = "${var.cluster_name}-private-workernodes"
+  cluster_name    = "${var.clustername}"
+  node_group_name = "${var.clustername}-private-workernodes"
   node_role_arn   = data.aws_iam_role.workernodes.arn
   subnet_ids      = concat(var.subnet_private_ids, var.subnet_public_ids)
  
@@ -59,15 +71,6 @@ provider "kubernetes" {
   host                   = aws_eks_cluster.cluster.endpoint
   cluster_ca_certificate = base64decode(aws_eks_cluster.cluster.certificate_authority.0.data)
   token                  = data.aws_eks_cluster_auth.cluster.token
-}
-
-resource "kubernetes_namespace" "this" {
-  metadata {
-    name = var.namespace
-  }
-  depends_on = [
-    aws_eks_cluster.cluster
-  ]
 }
 
 data "tls_certificate" "eks"{
@@ -109,7 +112,7 @@ module "iam_assumable_role_admin" {
                                    data.aws_iam_policy.AWSEksIamPolicy.arn,
                                    data.aws_iam_policy.AWSEcrGroupPolicy.arn]
   oidc_fully_qualified_subjects = ["system:serviceaccount:kube-system:aws-load-balancer-controller",
-                                   "system:serviceaccount:${var.namespace}:aws-load-balancer-controller"]
+                                   "system:serviceaccount:${var.namespace["default"]}:aws-load-balancer-controller"]
 
   tags = {
     Terraform   = "true"
@@ -122,7 +125,7 @@ resource "kubernetes_service_account" "this" {
   automount_service_account_token = true
   metadata {
     name      = "aws-load-balancer-controller"
-    namespace = "${var.namespace}"
+    namespace = "${var.namespace["default"]}"
     annotations = {
       "eks.amazonaws.com/role-arn"   = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/AWSLoadBalancerCtrlerIamRole"
     }

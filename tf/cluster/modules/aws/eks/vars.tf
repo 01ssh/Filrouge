@@ -11,7 +11,7 @@ variable "cluster_encryption_config_enabled" {
   default     = true
 }
 
-variable "cluster_name" {
+variable "clustername" {
   type        = string
   description = "EKS Cluster Name"
   default     = "WORDPRESS"
@@ -35,7 +35,7 @@ variable "eks_policy_user" {
    default     = "" 
 }
 
-variable "enable_gitlab_ks8" {
+variable "enable_monitoring" {
    type       = bool
    default    = false
 }
@@ -62,16 +62,15 @@ variable "domain_name" {
 }
 
 variable "namespace" {
-   type        = string
-   default     = "development"
+    sensitive = false
 }
 
-variable "aws_region" {
+variable "region" {
    type        = string
    default     = "eu-west-3"
 }
 
-variable "vpc_id" {
+variable "vpcid" {
    type        = string
    default     = ""
 }
@@ -82,17 +81,15 @@ variable "chart_env_overrides" {
   default     = {}
 }
 
-variable "enable_gitlab_agent_ks8" {
+variable "monitoring" {
+}
+
+variable "enable_gitlab_agent" {
    type       = bool
    default    = false
 }
 
-variable "enable_cert_manager_ks8" {
-   type       = bool
-   default    = false
-}
-
-variable "enable_fluentbit" {
+variable "enable_management" {
    type       = bool
    default    = false
 }
@@ -110,4 +107,28 @@ variable "account" {
 variable "profile" {
    type        = string
    default     = "admin"
+}
+
+variable "secretAccessKey" {
+   type        = string
+   default     = ""
+}
+
+variable "accessKeyId" {
+   type        = string
+   default     = ""
+}
+
+variable "addons" {
+  type = list(object({
+    name    = string
+    version = string
+  }))
+
+  default = [
+    {
+      name    = "aws-ebs-csi-driver"
+      version = "v1.29.1-eksbuild.1"
+    }
+  ]
 }

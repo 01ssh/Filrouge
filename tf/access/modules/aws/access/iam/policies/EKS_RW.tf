@@ -25,7 +25,10 @@ data "aws_iam_policy_document" "eks_RW" {
       "EKS:UntagResource",
       "aps:ListScrapers",
       "iam:ListRoles",
-      "EKS:DeleteCluster"
+      "EKS:DeleteCluster",
+      "EKS:CreateAddon",
+      "EKS:DescribeAddon",
+      "EKS:DeleteAddon"
     ]
     resources = ["*"]
   }
@@ -88,7 +91,12 @@ resource "aws_iam_role" "workernodes" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
   role    = aws_iam_role.workernodes.name
  }
- 
+
+resource "aws_iam_role_policy_attachment" "AmazonEKSWorkerClusterPolicy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role    = aws_iam_role.workernodes.name
+ }
+
  resource "aws_iam_role_policy_attachment" "AmazonEKS_CNI_Policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
   role    = aws_iam_role.workernodes.name
